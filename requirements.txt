@@ -1,4 +1,30 @@
-requests>=2.31.0
-pandas>=2.0.0
-pyinstaller>=5.13.2
-pillow>=10.0.0
+# AI Alpha Strategy Generator — dependencies
+# Install via: pip install -e ".[dev]"
+# Or directly: pip install -r requirements.txt
+
+httpx[http2]>=0.27
+pydantic>=2.6
+pydantic-settings>=2.2
+duckdb>=0.10
+chromadb>=0.5
+sentence-transformers>=3.0
+litellm>=1.40
+lark>=1.1
+langgraph>=0.1
+langchain-core>=0.2
+pandas>=2.1
+numpy>=1.26
+PyYAML>=6.0
+python-dotenv>=1.0
+tenacity>=8.3
+rich>=13.7
+nest-asyncio>=1.6
+
+# Dev / Notebook extras
+pytest>=8.0
+pytest-asyncio>=0.23
+ipykernel>=6.29
+notebook>=7.1
+matplotlib>=3.8
+seaborn>=0.13
+scikit-learn>=1.4

@@ -1,0 +1,351 @@
+# FASTEXPR Operator Knowledge Base
+# Format per operator:
+#   name: operator function name
+#   category: one of [cross_section, time_series, math, conditional, group, transform]
+#   arity: number of required arguments (use -1 for variadic)
+#   signature: human-readable argument list
+#   return_type: SCALAR | MATRIX | BOOL
+#   description: what the operator computes
+#   example: a concrete FASTEXPR usage example
+#   tips: alpha research usage tips
+
+operators:
+
+  # ── Cross-sectional ──────────────────────────────────────────────────────────
+
+  - name: rank
+    category: cross_section
+    arity: 1
+    signature: rank(x)
+    return_type: MATRIX
+    description: Cross-sectional rank of x, normalized to [0, 1].
+    example: rank(close)
+    tips: Rank transforms raw signals into uniform distributions, reducing outlier impact. Very commonly used as the first step in alpha construction.
+
+  - name: zscore
+    category: cross_section
+    arity: 1
+    signature: zscore(x)
+    return_type: MATRIX
+    description: Cross-sectional z-score normalization of x.
+    example: zscore(pe_ratio)
+    tips: Useful when you want to preserve the sign and magnitude relative to peers.
+
+  - name: scale
+    category: cross_section
+    arity: 1
+    signature: scale(x)
+    return_type: MATRIX
+    description: Scales x so the sum of absolute values equals 1 cross-sectionally.
+    example: scale(rank(returns))
+    tips: Used to satisfy dollar-neutral portfolio constraints. Often the final step.
+
+  - name: demean
+    category: cross_section
+    arity: 1
+    signature: demean(x)
+    return_type: MATRIX
+    description: Subtract the cross-sectional mean from x.
+    example: demean(eps)
+    tips: Removes market-wide effects. Similar to market-neutral neutralization.
+
+  - name: group_rank
+    category: cross_section
+    arity: 2
+    signature: group_rank(x, group)
+    return_type: MATRIX
+    description: Rank x within each group (e.g., subindustry, industry, sector).
+    example: group_rank(returns, subindustry)
+    tips: Generates industry-relative signals. 'group' can be subindustry, industry, sector, or market.
+
+  - name: group_mean
+    category: cross_section
+    arity: 3
+    signature: group_mean(x, weight, group)
+    return_type: MATRIX
+    description: Weighted mean of x within each group.
+    example: group_mean(close, 1, industry)
+    tips: Compute peer group averages for relative valuation factors.
+
+  - name: group_neutralize
+    category: cross_section
+    arity: 2
+    signature: group_neutralize(x, group)
+    return_type: MATRIX
+    description: Remove group mean from x (demeaned within group).
+    example: group_neutralize(rank(pe_ratio), industry)
+    tips: Neutralizes industry bets. Equivalent to running a within-group regression.
+
+  - name: vector_neut
+    category: cross_section
+    arity: 2
+    signature: vector_neut(x, y)
+    return_type: MATRIX
+    description: Orthogonalize x with respect to y (remove the component of x explained by y).
+    example: vector_neut(momentum, value)
+    tips: Used to isolate independent signal components. Common in factor decorrelation.
+
+  - name: regression_neut
+    category: cross_section
+    arity: 2
+    signature: regression_neut(x, y)
+    return_type: MATRIX
+    description: Residual of regressing x on y cross-sectionally.
+    example: regression_neut(field1, field2)
+    tips: More robust than vector_neut when y is noisy. Creates orthogonal signal.
+
+  - name: bucket
+    category: cross_section
+    arity: 2
+    signature: "bucket(x, range='lo,hi,step')"
+    return_type: MATRIX
+    description: Assigns x into quantile buckets defined by a range string.
+    example: "bucket(rank(cap), range='0,1,0.1')"
+    tips: Creates categorical groupings. Useful for size/momentum decile sorting.
+
+  # ── Time-series ───────────────────────────────────────────────────────────────
+
+  - name: ts_mean
+    category: time_series
+    arity: 2
+    signature: ts_mean(x, d)
+    return_type: MATRIX
+    description: Rolling mean of x over the past d days.
+    example: ts_mean(volume, 20)
+    tips: Common window sizes are 5, 10, 20, 60, 252. Shorter = noisier, longer = smoother.
+
+  - name: ts_std_dev
+    category: time_series
+    arity: 2
+    signature: ts_std_dev(x, d)
+    return_type: MATRIX
+    description: Rolling standard deviation of x over d days.
+    example: ts_std_dev(returns, 20)
+    tips: Proxy for realized volatility. Useful for volatility scaling / risk adjustment.
+
+  - name: ts_sum
+    category: time_series
+    arity: 2
+    signature: ts_sum(x, d)
+    return_type: MATRIX
+    description: Rolling sum of x over d days.
+    example: ts_sum(volume, 5)
+    tips: Aggregates over short windows for momentum-like signals.
+
+  - name: ts_rank
+    category: time_series
+    arity: 2
+    signature: ts_rank(x, d)
+    return_type: MATRIX
+    description: Time-series rank of today's value among the past d days.
+    example: ts_rank(close, 252)
+    tips: 52-week high/low proximity signals. Values near 1 mean near historic high.
+
+  - name: ts_corr
+    category: time_series
+    arity: 3
+    signature: ts_corr(x, y, d)
+    return_type: MATRIX
+    description: Rolling correlation between x and y over d days.
+    example: ts_corr(volume, returns, 10)
+    tips: Captures dynamic relationships. Negative corr between volume and returns can signal reversal.
+
+  - name: delay
+    category: time_series
+    arity: 2
+    signature: delay(x, d)
+    return_type: MATRIX
+    description: Value of x d days ago.
+    example: delay(close, 1)
+    tips: Used to compute returns, overnight effects, and lagged signals.
+
+  - name: delta
+    category: time_series
+    arity: 2
+    signature: delta(x, d)
+    return_type: MATRIX
+    description: x - delay(x, d). Change over d days.
+    example: delta(close, 5)
+    tips: Raw momentum signal. Often normalized by std or rank.
+
+  - name: ts_decay_linear
+    category: time_series
+    arity: 2
+    signature: ts_decay_linear(x, d)
+    return_type: MATRIX
+    description: Linearly weighted moving average decaying to 0 at d days ago.
+    example: ts_decay_linear(returns, 10)
+    tips: Gives more weight to recent data. Reduces lag compared to simple mean.
+
+  - name: ts_decay_exp_window
+    category: time_series
+    arity: 3
+    signature: ts_decay_exp_window(x, d, factor=0.5)
+    return_type: MATRIX
+    description: Exponentially weighted moving average over d days.
+    example: ts_decay_exp_window(volume, 20, factor=0.9)
+    tips: factor controls smoothing. Higher factor = slower decay.
+
+  - name: ts_min
+    category: time_series
+    arity: 2
+    signature: ts_min(x, d)
+    return_type: MATRIX
+    description: Rolling minimum over d days.
+    example: ts_min(low, 10)
+    tips: Useful for support/resistance levels.
+
+  - name: ts_max
+    category: time_series
+    arity: 2
+    signature: ts_max(x, d)
+    return_type: MATRIX
+    description: Rolling maximum over d days.
+    example: ts_max(high, 10)
+    tips: Combined with ts_min to compute price range signals.
+
+  - name: ts_skewness
+    category: time_series
+    arity: 2
+    signature: ts_skewness(x, d)
+    return_type: MATRIX
+    description: Rolling skewness of x over d days.
+    example: ts_skewness(returns, 20)
+    tips: Positive skew = fat right tail. Negative skew is often compensated by higher mean returns.
+
+  - name: ts_kurtosis
+    category: time_series
+    arity: 2
+    signature: ts_kurtosis(x, d)
+    return_type: MATRIX
+    description: Rolling kurtosis of x over d days.
+    example: ts_kurtosis(returns, 20)
+    tips: High kurtosis = fat tails. Useful for tail-risk signals.
+
+  # Aliases used in original project
+  - name: mean
+    category: time_series
+    arity: 2
+    signature: mean(x, d)
+    return_type: MATRIX
+    description: Alias for ts_mean. Rolling mean of x over d days.
+    example: mean(volume, 20)
+    tips: Identical to ts_mean; prefer ts_mean for clarity.
+
+  - name: std
+    category: time_series
+    arity: 2
+    signature: std(x, d)
+    return_type: MATRIX
+    description: Alias for ts_std_dev. Rolling std of x over d days.
+    example: std(returns, 20)
+    tips: Identical to ts_std_dev; prefer ts_std_dev for clarity.
+
+  - name: correlation
+    category: time_series
+    arity: 3
+    signature: correlation(x, y, d)
+    return_type: MATRIX
+    description: Alias for ts_corr. Rolling correlation between x and y.
+    example: correlation(close, volume, 10)
+    tips: Identical to ts_corr.
+
+  # ── Mathematical ──────────────────────────────────────────────────────────────
+
+  - name: abs
+    category: math
+    arity: 1
+    signature: abs(x)
+    return_type: MATRIX
+    description: Absolute value of x.
+    example: abs(returns)
+    tips: Used to capture realized volatility signal.
+
+  - name: log
+    category: math
+    arity: 1
+    signature: log(x)
+    return_type: MATRIX
+    description: Natural logarithm of x.
+    example: log(market_cap)
+    tips: Log-transforms skewed financial data (e.g., market cap, revenue).
+
+  - name: power
+    category: math
+    arity: 2
+    signature: power(x, e)
+    return_type: MATRIX
+    description: x raised to the power e.
+    example: power(returns, 2)
+    tips: Squaring captures variance; cubing amplifies large deviations.
+
+  - name: sign
+    category: math
+    arity: 1
+    signature: sign(x)
+    return_type: MATRIX
+    description: Returns -1, 0, or +1 based on the sign of x.
+    example: sign(delta(close, 1))
+    tips: Converts continuous signals to directional indicators.
+
+  - name: signedpower
+    category: math
+    arity: 2
+    signature: signedpower(x, e)
+    return_type: MATRIX
+    description: sign(x) * abs(x)^e — power preserving sign.
+    example: signedpower(returns, 0.5)
+    tips: Useful for dampening outliers while preserving direction.
+
+  # ── Conditional ───────────────────────────────────────────────────────────────
+
+  - name: if_else
+    category: conditional
+    arity: 3
+    signature: if_else(condition, x, y)
+    return_type: MATRIX
+    description: Returns x where condition is true, y otherwise.
+    example: "if_else(rank(volume) > 0.5, returns, -returns)"
+    tips: Creates regime-switching signals. Condition can be a boolean expression.
+
+  - name: trade_when
+    category: conditional
+    arity: 3
+    signature: trade_when(condition, x, default)
+    return_type: MATRIX
+    description: Trade using signal x when condition is true, use default otherwise.
+    example: "trade_when(volume > mean(volume, 20), rank(returns), -1)"
+    tips: Filters alpha to only activate under specific market conditions.
+
+  # ── Group / Industry ──────────────────────────────────────────────────────────
+
+  - name: group_zscore
+    category: group
+    arity: 2
+    signature: group_zscore(x, group)
+    return_type: MATRIX
+    description: Z-score normalize x within each group.
+    example: group_zscore(pe_ratio, subindustry)
+    tips: Better than group_rank for preserving relative magnitudes within peer groups.
+
+  - name: group_backfill
+    category: group
+    arity: 2
+    signature: group_backfill(x, group)
+    return_type: MATRIX
+    description: Fill missing values using the group mean.
+    example: group_backfill(eps, industry)
+    tips: Useful for fundamental data with many NaN values.
+
+  # ── Neutralization (built-in settings, not direct operators) ──────────────────
+
+  - name: _neutralization_subindustry
+    category: group
+    arity: 0
+    signature: "settings.neutralization = SUBINDUSTRY"
+    return_type: SCALAR
+    description: >
+      Platform-level setting. Residualizes the portfolio against subindustry
+      exposure after the alpha is computed. Not a callable function.
+    example: "settings: {neutralization: 'SUBINDUSTRY'}"
+    tips: Default in most high-quality alphas. INDUSTRY gives broader neutralization.

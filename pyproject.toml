@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alpha-agent"
+version = "0.1.0"
+description = "AI-driven Alpha strategy generator for WorldQuant Brain"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx[http2]>=0.27",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "duckdb>=0.10",
+    "chromadb>=0.5",
+    "sentence-transformers>=3.0",
+    "litellm>=1.40",
+    "lark>=1.1",
+    "langgraph>=0.1",
+    "langchain-core>=0.2",
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0",
+    "tenacity>=8.3",
+    "rich>=13.7",
+    "nest-asyncio>=1.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ipykernel>=6.29",
+    "notebook>=7.1",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "scikit-learn>=1.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["alpha_agent*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -39,3 +39,9 @@ mac/build/
 # Windows
 dist/
 build/
+
+# Virtual environments
+myenv/
+myvenv/
+venv/
+.venv/
