@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     max_rounds: int = Field(default=10, alias="MAX_ROUNDS")
     novelty_score_min: float = Field(default=0.3, alias="NOVELTY_SCORE_MIN")
 
+    # ── Dual-track skeleton system ────────────────────────────────────────────
+    track_explorer_ratio: float = Field(default=0.3, alias="TRACK_EXPLORER_RATIO")
+    skeleton_min_seeds: int = Field(default=3, alias="SKELETON_MIN_SEEDS")
+    skeleton_variants_per_seed: int = Field(default=5, alias="SKELETON_VARIANTS_PER_SEED")
+    soft_enable_skeleton: bool = Field(default=True, alias="SOFT_ENABLE_SKELETON")
+    skeleton_pick_strategy: str = Field(default="ucb", alias="SKELETON_PICK_STRATEGY")
+    explorer_floor: float = Field(default=0.1, alias="EXPLORER_FLOOR")
+
     @model_validator(mode="after")
     def _normalize_storage_paths(self) -> "Settings":
         """Resolve relative storage paths against project root for stable notebook behavior."""

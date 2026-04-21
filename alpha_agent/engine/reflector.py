@@ -19,6 +19,7 @@ import litellm
 
 from alpha_agent.config import settings
 from alpha_agent.data.wqb_client import AlphaResult
+from alpha_agent.llm_utils import supports_json_response_format
 from alpha_agent.knowledge.alpha_memory import AlphaMemory
 
 _SYSTEM_PROMPT = """\
@@ -79,8 +80,7 @@ class Reflector:
             "messages": messages,
             "temperature": 0.3,
         }
-        # deepseek-reasoner rejects response_format=json_object.
-        if not self._model.startswith("deepseek/"):
+        if supports_json_response_format(self._model):
             kwargs["response_format"] = {"type": "json_object"}
         return kwargs
 

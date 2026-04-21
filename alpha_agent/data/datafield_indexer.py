@@ -16,6 +16,7 @@ import litellm
 
 from alpha_agent.config import settings
 from alpha_agent.data.wqb_client import WQBClient
+from alpha_agent.llm_utils import supports_json_response_format
 from alpha_agent.knowledge.vector_store import COLLECTION_FIELDS, VectorStore
 
 _SEMANTIC_PROMPT = """\
@@ -110,8 +111,7 @@ class DataFieldIndexer:
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
         }
-        # deepseek-reasoner rejects response_format=json_object.
-        if not self._model.startswith("deepseek/"):
+        if supports_json_response_format(self._model):
             kwargs["response_format"] = {"type": "json_object"}
         return kwargs
 

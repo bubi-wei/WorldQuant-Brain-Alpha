@@ -20,6 +20,7 @@ from typing import Any
 import litellm
 
 from alpha_agent.config import settings
+from alpha_agent.llm_utils import supports_json_response_format
 from alpha_agent.knowledge.alpha_memory import AlphaMemory
 from alpha_agent.knowledge.vector_store import VectorStore
 
@@ -29,9 +30,10 @@ Your task is to generate creative, rigorous factor hypotheses for the WorldQuant
 
 Rules:
 - Each hypothesis must have a clear economic or behavioral rationale
-- Prefer hypotheses that are NOT obvious extensions of existing momentum/value templates
 - Candidate fields must come from the provided dataset
 - Candidate operators must exist in the provided FASTEXPR operator reference
+- Feel free to build on known structural patterns (e.g., group_rank of ts_std_dev) with
+  different fields or modifications — refining proven structures is as valuable as novel ideas
 - Flag any expected risks (high turnover, data sparsity, crowd risk)
 - Output MUST be valid JSON
 """
@@ -89,8 +91,7 @@ class IdeaAgent:
             "messages": [],
             "temperature": temperature,
         }
-        # deepseek-reasoner rejects response_format=json_object.
-        if not self._model.startswith("deepseek/"):
+        if supports_json_response_format(self._model):
             kwargs["response_format"] = {"type": "json_object"}
         return kwargs
 

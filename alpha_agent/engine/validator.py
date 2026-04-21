@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
-from lark import Lark, UnexpectedInput
-
-from alpha_agent.data.operator_kb import OperatorKB
+from lark import Lark, Tree, UnexpectedInput
 
 # ── Grammar ───────────────────────────────────────────────────────────────────
 # A subset FASTEXPR grammar covering the most common patterns.
@@ -81,10 +80,13 @@ class ExprValidator:
 
     def __init__(
         self,
-        operator_kb: OperatorKB | None = None,
+        operator_kb: Any | None = None,
         known_fields: set[str] | None = None,
     ) -> None:
-        self._kb = operator_kb or OperatorKB()
+        if operator_kb is None:
+            from alpha_agent.data.operator_kb import OperatorKB  # noqa: PLC0415
+            operator_kb = OperatorKB()
+        self._kb = operator_kb
         self._known_fields = known_fields or set()
         self._known_ops = set(self._kb.all_names())
 
@@ -182,6 +184,22 @@ class ExprValidator:
 
 
 def quick_validate(expression: str, known_fields: set[str] | None = None) -> ValidationResult:
-    """Convenience function for one-off validation."""
-    validator = ExprValidator(known_fields=known_fields or set())
+    """Convenience function for one-off validation without OperatorKB."""
+    # Avoid loading OperatorKB/VectorStore for lightweight callers
+    class _MinimalKB:
+        def all_names(self) -> list[str]:
+            return []
+    validator = ExprValidator(operator_kb=_MinimalKB(), known_fields=known_fields or set())
     return validator.validate(expression)
+
+
+def extract_ast(expression: str) -> Tree | None:
+    """Parse a FASTEXPR string and return its lark Tree, or None on failure.
+
+    Public helper used by SkeletonExtractor to walk the AST without
+    instantiating a full ExprValidator.
+    """
+    try:
+        return _PARSER.parse(expression.strip())
+    except Exception:
+        return None

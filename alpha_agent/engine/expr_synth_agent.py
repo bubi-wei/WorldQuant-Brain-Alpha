@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 
 import litellm
@@ -21,6 +22,7 @@ import litellm
 from alpha_agent.config import settings
 from alpha_agent.data.operator_kb import OperatorKB
 from alpha_agent.engine.validator import ExprValidator, ValidationResult
+from alpha_agent.llm_utils import supports_json_response_format
 from alpha_agent.knowledge.alpha_memory import AlphaMemory
 
 _SYSTEM_PROMPT = """\
@@ -58,7 +60,9 @@ Available dataset fields (use ONLY from this list or common builtins):
 {few_shots}
 
 Generate {k} diverse FASTEXPR expression variants for this hypothesis.
-Vary window sizes, operators, and structure across variants.
+Vary window sizes and fields across variants. You may reuse a proven operator
+structure (skeleton) from the few-shot examples — replacing fields while
+keeping the structure intact is encouraged.
 Each expression should be syntactically complete and self-contained.
 """
 
@@ -87,8 +91,7 @@ class ExprSynthAgent:
             "temperature": 0.9,
             "n": 1,
         }
-        # deepseek-reasoner rejects response_format=json_object.
-        if not self._model.startswith("deepseek/"):
+        if supports_json_response_format(self._model):
             kwargs["response_format"] = {"type": "json_object"}
         return kwargs
 
@@ -163,13 +166,43 @@ class ExprSynthAgent:
                     {"role": "user", "content": user_prompt},
                 ])),
             )
-            content = resp.choices[0].message.content or "{}"
-            parsed = json.loads(content)
+            content = (resp.choices[0].message.content or "").strip()
+            parsed = self._parse_llm_json(content)
             exprs = parsed.get("expressions", [])
+            if not isinstance(exprs, list):
+                return []
             return [str(e).strip() for e in exprs if e]
         except Exception as e:
             print(f"[ExprSynthAgent] LLM call failed: {e}")
             return []
+
+    @staticmethod
+    def _parse_llm_json(content: str) -> dict[str, Any]:
+        """Parse JSON robustly from raw model output."""
+        if not content:
+            raise ValueError("empty model response")
+
+        # Fast path: pure JSON.
+        try:
+            parsed = json.loads(content)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            pass
+
+        # Common case: wrapped in ```json ... ```.
+        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, flags=re.IGNORECASE | re.DOTALL)
+        if fenced:
+            parsed = json.loads(fenced.group(1))
+            return parsed if isinstance(parsed, dict) else {}
+
+        # Fallback: extract outermost JSON object from mixed text.
+        start = content.find("{")
+        end = content.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            parsed = json.loads(content[start:end + 1])
+            return parsed if isinstance(parsed, dict) else {}
+
+        raise ValueError("model response does not contain a JSON object")
 
     def _get_few_shots(self, hypothesis: dict[str, Any]) -> str:
         """Fetch similar successful alphas from memory as few-shot examples."""
@@ -188,7 +221,7 @@ class ExprSynthAgent:
         if not alphas:
             return "(no historical examples yet)"
 
-        lines = ["Here are successful alpha expressions for inspiration (do NOT copy verbatim):"]
+        lines = ["Here are successful alpha expressions for inspiration (preserve operator structure, substitute fields as appropriate):"]
         for a in alphas:
             m = a.get("metrics", {})
             lines.append(

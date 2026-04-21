@@ -27,8 +27,11 @@ CREATE TABLE IF NOT EXISTS alphas (
     metrics_json    VARCHAR DEFAULT '{}',
     checks_json     VARCHAR DEFAULT '[]',
     qualified       BOOLEAN DEFAULT FALSE,
+    soft_qualified  BOOLEAN DEFAULT FALSE,
     failure_reasons VARCHAR DEFAULT '[]',
     reflection      VARCHAR DEFAULT '',
+    skeleton_id     VARCHAR DEFAULT '',
+    track           VARCHAR DEFAULT 'explorer',
     embedding       FLOAT[],
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -43,6 +46,14 @@ CREATE TABLE IF NOT EXISTS directions (
 );
 """
 
+_ALPHA_REQUIRED_COLUMNS: dict[str, str] = {
+    "checks_json": "VARCHAR DEFAULT '[]'",
+    "soft_qualified": "BOOLEAN DEFAULT FALSE",
+    "skeleton_id": "VARCHAR DEFAULT ''",
+    "track": "VARCHAR DEFAULT 'explorer'",
+    "embedding": "FLOAT[]",
+}
+
 
 class AlphaMemory:
     """DuckDB-backed store for alpha history, metrics, and reflections."""
@@ -52,10 +63,12 @@ class AlphaMemory:
         Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         self._read_only = False
         self._ephemeral = False
+        self._lock_message = ""
         try:
             self._conn = duckdb.connect(self._path)
         except Exception as e:
             message = str(e)
+            self._lock_message = message
             # If another live kernel/process holds a write lock, fall back to read-only
             # so notebooks can still run retrieval/analysis workflows.
             if "Conflicting lock is held" in message:
@@ -79,14 +92,38 @@ class AlphaMemory:
             else:
                 raise
         self._conn.execute(_CREATE_TABLE)
+        self._migrate_schema()
+
+    def _migrate_schema(self) -> None:
+        """Add missing columns for older DB files created before new schema fields."""
+        if self._read_only:
+            return
+
+        existing_cols = {
+            str(row[1]).lower()
+            for row in self._conn.execute("PRAGMA table_info('alphas')").fetchall()
+        }
+        for col, ddl in _ALPHA_REQUIRED_COLUMNS.items():
+            if col not in existing_cols:
+                self._conn.execute(f"ALTER TABLE alphas ADD COLUMN {col} {ddl}")
 
     def _ensure_writable(self) -> None:
         if self._read_only:
             suffix = " (in-memory fallback)" if self._ephemeral else ""
+            detail = f" Lock detail: {self._lock_message}" if self._lock_message else ""
             raise RuntimeError(
                 "AlphaMemory is in read-only mode due to a DuckDB lock. "
-                f"Stop other Python kernels/processes using the same DB and retry{suffix}."
+                f"Stop other Python kernels/processes using the same DB and retry{suffix}.{detail}"
             )
+
+    def status(self) -> dict[str, Any]:
+        """Expose runtime status for notebook diagnostics."""
+        return {
+            "path": self._path,
+            "read_only": self._read_only,
+            "ephemeral": self._ephemeral,
+            "lock_message": self._lock_message,
+        }
 
     def close(self) -> None:
         self._conn.close()
@@ -110,8 +147,11 @@ class AlphaMemory:
         metrics: dict[str, Any] | None = None,
         checks: list[dict[str, Any]] | None = None,
         qualified: bool = False,
+        soft_qualified: bool = False,
         failure_reasons: list[str] | None = None,
         reflection: str = "",
+        skeleton_id: str = "",
+        track: str = "explorer",
         embedding: list[float] | None = None,
     ) -> str:
         self._ensure_writable()
@@ -120,9 +160,9 @@ class AlphaMemory:
             """
             INSERT OR REPLACE INTO alphas
                 (id, expression, hypothesis, dataset, universe,
-                 metrics_json, checks_json, qualified, failure_reasons,
-                 reflection, embedding, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 metrics_json, checks_json, qualified, soft_qualified, failure_reasons,
+                 reflection, skeleton_id, track, embedding, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 row_id,
@@ -133,13 +173,24 @@ class AlphaMemory:
                 json.dumps(metrics or {}),
                 json.dumps(checks or []),
                 qualified,
+                soft_qualified,
                 json.dumps(failure_reasons or []),
                 reflection,
+                skeleton_id,
+                track,
                 embedding,
                 datetime.utcnow().isoformat(),
             ],
         )
         return row_id
+
+    def update_skeleton_link(self, alpha_id: str, skeleton_id: str) -> None:
+        """Link an existing alpha record to a skeleton (post-extraction)."""
+        self._ensure_writable()
+        self._conn.execute(
+            "UPDATE alphas SET skeleton_id = ? WHERE id = ?",
+            [skeleton_id, alpha_id],
+        )
 
     def update_reflection(self, alpha_id: str, reflection: str) -> None:
         self._ensure_writable()
@@ -259,7 +310,8 @@ class AlphaMemory:
         import pandas as pd  # noqa: PLC0415
         return self._conn.execute(
             "SELECT id, expression, hypothesis, dataset, universe, "
-            "metrics_json, qualified, failure_reasons, reflection, created_at "
+            "metrics_json, checks_json, qualified, soft_qualified, "
+            "skeleton_id, track, failure_reasons, reflection, embedding, created_at "
             "FROM alphas ORDER BY created_at DESC"
         ).df()
 

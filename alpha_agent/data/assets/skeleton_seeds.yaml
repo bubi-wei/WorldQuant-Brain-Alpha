@@ -1,0 +1,182 @@
+# Seed Skeletons — cold-start templates for the Skeleton track.
+#
+# Each entry defines a proven (or highly plausible) FASTEXPR structural pattern
+# extracted from the original alpha_strategy.py templates.
+#
+# Fields:
+#   template_str:    Expression with $X1/$W1/$G1 placeholders
+#   operators_used:  Flat list of operators in the template
+#   field_slots:     [{name, semantic_hint}]  — X placeholders
+#   param_slots:     [{name, type, range, seen}] — W placeholders
+#   group_slots:     [{name, candidates}] — G placeholders
+#   origin_hypothesis: Short description of the economic idea behind this skeleton
+
+skeletons:
+
+  # ── Intraday price structure ─────────────────────────────────────────────
+  - template_str: "group_rank(($X1 - $X2) / $X2, $G1)"
+    operators_used: [group_rank]
+    field_slots:
+      - name: "$X1"
+        semantic_hint: "price at end of period (e.g. close)"
+      - name: "$X2"
+        semantic_hint: "price at start of period (e.g. open)"
+    param_slots: []
+    group_slots:
+      - name: "$G1"
+        candidates: [subindustry, industry, sector, market]
+    origin_hypothesis: "Intraday return cross-sectionally ranked within industry group"
+
+  # ── Volatility rank ──────────────────────────────────────────────────────
+  - template_str: "group_rank(ts_std_dev($X1, $W1), $G1)"
+    operators_used: [group_rank, ts_std_dev]
+    field_slots:
+      - name: "$X1"
+        semantic_hint: "return or price signal with meaningful volatility"
+    param_slots:
+      - name: "$W1"
+        type: int_window
+        range: [5, 252]
+        seen: [20, 30]
+    group_slots:
+      - name: "$G1"
+        candidates: [subindustry, industry, sector, market]
+    origin_hypothesis: "Rolling volatility cross-sectionally ranked — low-vol anomaly / vol premium"
+
+  # ── Volatility-normalized signal ─────────────────────────────────────────
+  - template_str: "group_rank(ts_std_dev($X1, $W1) / ts_mean($X2, $W2), $G1)"
+    operators_used: [group_rank, ts_std_dev, ts_mean]
+    field_slots:
+      - name: "$X1"
+        semantic_hint: "signal to measure volatility of (e.g. returns, price)"
+      - name: "$X2"
+        semantic_hint: "signal to normalize by (e.g. volume, turnover)"
+    param_slots:
+      - name: "$W1"
+        type: int_window
+        range: [5, 60]
+        seen: [20]
+      - name: "$W2"
+        type: int_window
+        range: [5, 60]
+        seen: [20]
+    group_slots:
+      - name: "$G1"
+        candidates: [subindustry, industry, sector, market]
+    origin_hypothesis: "Relative volatility of one signal to the mean of another — captures relative efficiency"
+
+  # ── Volume-return correlation ─────────────────────────────────────────────
+  - template_str: "ts_corr($X1, abs($X2), $W1)"
+    operators_used: [ts_corr]
+    field_slots:
+      - name: "$X1"
+        semantic_hint: "volume or liquidity measure"
+      - name: "$X2"
+        semantic_hint: "return or price change"
+    param_slots:
+      - name: "$W1"
+        type: int_window
+        range: [5, 30]
+        seen: [10]
+    group_slots: []
+    origin_hypothesis: "Correlation between volume and absolute returns — measures price impact / informed trading"
+
+  # ── Volume anomaly ────────────────────────────────────────────────────────
+  - template_str: "group_rank(($X1 - ts_mean($X1, $W1)) / ts_std_dev($X1, $W1), $G1)"
+    operators_used: [group_rank, ts_mean, ts_std_dev]
+    field_slots:
+      - name: "$X1"
+        semantic_hint: "volume or turnover or liquidity measure"
+    param_slots:
+      - name: "$W1"
+        type: int_window
+        range: [5, 60]
+        seen: [20]
+    group_slots:
+      - name: "$G1"
+        candidates: [subindustry, industry, sector, market]
+    origin_hypothesis: "Z-score of volume within lookback window ranked cross-sectionally — volume shock signal"
+
+  # ── Conditional trade ────────────────────────────────────────────────────
+  - template_str: "trade_when(ts_rank(ts_std_dev($X1, $W1), $W2) < $W3, $X2, -1)"
+    operators_used: [trade_when, ts_rank, ts_std_dev]
+    field_slots:
+      - name: "$X1"
+        semantic_hint: "signal to measure regime volatility (e.g. returns)"
+      - name: "$X2"
+        semantic_hint: "signal to trade when low-vol regime is active"
+    param_slots:
+      - name: "$W1"
+        type: int_window
+        range: [5, 30]
+        seen: [10]
+      - name: "$W2"
+        type: int_window
+        range: [60, 252]
+        seen: [252]
+      - name: "$W3"
+        type: quantile
+        range: [0.5, 0.95]
+        seen: [0.9]
+    group_slots: []
+    origin_hypothesis: "Only trade signal when market is in a low-volatility regime — regime filter"
+
+  # ── Correlation rank ─────────────────────────────────────────────────────
+  - template_str: "group_rank(ts_corr($X1, $X2, $W1), $G1)"
+    operators_used: [group_rank, ts_corr]
+    field_slots:
+      - name: "$X1"
+        semantic_hint: "primary signal (e.g. field, returns)"
+      - name: "$X2"
+        semantic_hint: "secondary signal correlated with X1 (e.g. volume/sharesout)"
+    param_slots:
+      - name: "$W1"
+        type: int_window
+        range: [5, 60]
+        seen: [20]
+    group_slots:
+      - name: "$G1"
+        candidates: [subindustry, industry, sector, market]
+    origin_hypothesis: "Cross-sectional rank of rolling correlation between two signals — co-movement premium"
+
+  # ── Regression neutral ────────────────────────────────────────────────────
+  - template_str: "regression_neut($X1, ts_std_dev($X2, $W1))"
+    operators_used: [regression_neut, ts_std_dev]
+    field_slots:
+      - name: "$X1"
+        semantic_hint: "primary factor signal to be neutralized"
+      - name: "$X2"
+        semantic_hint: "volatility factor to neutralize against (e.g. returns)"
+    param_slots:
+      - name: "$W1"
+        type: int_window
+        range: [10, 60]
+        seen: [30]
+    group_slots: []
+    origin_hypothesis: "Remove the component of a signal explained by volatility — clean factor construction"
+
+  # ── Conditional direction flip ────────────────────────────────────────────
+  - template_str: "if_else(rank($X1) > $W1, $X2, -1 * $X2)"
+    operators_used: [if_else, rank]
+    field_slots:
+      - name: "$X1"
+        semantic_hint: "conditioning signal for direction decision"
+      - name: "$X2"
+        semantic_hint: "signal to flip based on condition"
+    param_slots:
+      - name: "$W1"
+        type: quantile
+        range: [0.3, 0.7]
+        seen: [0.5]
+    group_slots: []
+    origin_hypothesis: "Buy/sell a signal depending on whether a conditioning variable is above/below median"
+
+  # ── Size-neutral group factor ─────────────────────────────────────────────
+  - template_str: "group_neutralize(rank($X1), bucket(rank(cap), range='0.1,1,0.1'))"
+    operators_used: [group_neutralize, rank, bucket]
+    field_slots:
+      - name: "$X1"
+        semantic_hint: "fundamental or technical signal to neutralize for size"
+    param_slots: []
+    group_slots: []
+    origin_hypothesis: "Neutralize a signal for market-cap (size) effect using size-bucket groups"

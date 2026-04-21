@@ -45,3 +45,10 @@ myenv/
 myvenv/
 venv/
 .venv/
+.env
+data/.db
+data/**/.sqlite3
+data/**/*.wal 
+data/*.bin
+data/**
+
