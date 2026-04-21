@@ -39,3 +39,9 @@ mac/build/
 # Windows
 dist/
 build/
+data/
+.venv_wqb/**
+venv/
+myenv/
+
+
