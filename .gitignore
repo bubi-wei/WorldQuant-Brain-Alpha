@@ -45,3 +45,5 @@ myenv/
 myvenv/
 venv/
 .venv/
+.venv_wqb/
+data/
