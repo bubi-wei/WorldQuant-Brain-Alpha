@@ -392,12 +392,17 @@ class Orchestrator:
         all_fields_list = list(self._validator._known_fields)
 
         console.print(f"[cyan][Explorer][/] Synthesizing {variants_k} variants/idea...")
-        for idea in ideas:
-            variants = await self._synth_agent.synthesize(
+        synth_tasks = [
+            self._synth_agent.synthesize(
                 hypothesis=idea,
                 all_fields=all_fields_list,
                 k=variants_k,
             )
+            for idea in ideas
+        ]
+        all_variants = await asyncio.gather(*synth_tasks)
+
+        for idea, variants in zip(ideas, all_variants):
             for expr in variants:
                 idea_map[expr] = idea.get("hypothesis", "")
             all_exprs.extend(variants)

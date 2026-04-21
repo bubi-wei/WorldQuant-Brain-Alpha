@@ -51,4 +51,5 @@ data/**/.sqlite3
 data/**/*.wal 
 data/*.bin
 data/**
+.venv_wqb
 

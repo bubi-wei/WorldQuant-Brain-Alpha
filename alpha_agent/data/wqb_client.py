@@ -156,7 +156,11 @@ class WQBClient:
             self._request("GET", "/data-fields", params={**base_params, "offset": offset})
             for offset in range(0, total, page_size)
         ]
-        pages = await asyncio.gather(*tasks)
+        pages: list[httpx.Response] = []
+        batch_size = 10
+        for i in range(0, len(tasks), batch_size):
+            batch_pages = await asyncio.gather(*tasks[i:i + batch_size])
+            pages.extend(batch_pages)
 
         all_fields: list[dict[str, Any]] = []
         for page in pages:
@@ -231,9 +235,12 @@ class WQBClient:
             if not alpha_id:
                 return None
 
-            await asyncio.sleep(3)
-
             detail_resp = await self._request("GET", f"/alphas/{alpha_id}")
+            for _ in range(5):
+                if detail_resp.status_code != 202:
+                    break
+                await asyncio.sleep(1)
+                detail_resp = await self._request("GET", f"/alphas/{alpha_id}")
             detail_resp.raise_for_status()
             alpha_data = detail_resp.json()
 
