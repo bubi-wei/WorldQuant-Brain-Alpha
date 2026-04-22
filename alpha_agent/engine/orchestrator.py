@@ -265,6 +265,15 @@ class Orchestrator:
         all_novel = novel_explorer + [v.expression for v in novel_skeleton_variants]
         report.expressions_after_novelty = all_novel
 
+        if all_novel:
+            console.print(
+                f"[cyan]Expressions after novelty filter ({len(all_novel)})[/]"
+            )
+            for idx, expr in enumerate(all_novel, start=1):
+                console.print(f"  [{idx:02d}] {expr}")
+        else:
+            console.print("[dim]No expressions passed novelty filter.[/]")
+
         if dry_run or not all_novel:
             if dry_run:
                 console.print("[dim]  DRY RUN — skipping WQB simulation[/]")

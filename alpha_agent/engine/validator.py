@@ -118,16 +118,16 @@ class ExprValidator:
         if errors:
             return ValidationResult(ok=False, errors=errors)
 
-        # Check 4: Unknown operators
+        # Check 4: Unknown operators (hard fail)
         unknown_ops = self._find_unknown_operators(expr)
         if unknown_ops:
-            warnings.append(f"Unknown operators (may be valid WQB builtins): {unknown_ops}")
+            errors.append(f"Unknown operators: {unknown_ops}")
 
-        # Check 5: Unknown fields (soft warning only — field list may be incomplete)
+        # Check 5: Unknown fields (hard fail in strict mode)
         if self._known_fields:
             unknown_fields = self._find_unknown_fields(expr)
             if unknown_fields:
-                warnings.append(f"Fields not in known set: {unknown_fields}")
+                errors.append(f"Fields not in known set: {unknown_fields}")
 
         return ValidationResult(ok=True, errors=[], warnings=warnings)
 
@@ -162,7 +162,8 @@ class ExprValidator:
     def _find_unknown_operators(self, expr: str) -> list[str]:
         # Operator calls look like: word(
         calls = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", expr)
-        unknown = [c for c in calls if c not in self._known_ops and not c.startswith("_")]
+        # Underscore-prefixed custom names are NOT allowed unless present in operator KB.
+        unknown = [c for c in calls if c not in self._known_ops]
         return list(dict.fromkeys(unknown))
 
     def _find_unknown_fields(self, expr: str) -> list[str]:

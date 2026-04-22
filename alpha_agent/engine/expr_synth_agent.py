@@ -51,6 +51,7 @@ Factor hypothesis:
 Rationale: {rationale}
 Candidate fields: {candidate_fields}
 Candidate operators: {candidate_operators}
+Allowed operator names (use ONLY from this list): {allowed_operators}
 Expected holding period: {holding_period}
 
 Available dataset fields (use ONLY from this list or common builtins):
@@ -123,8 +124,9 @@ class ExprSynthAgent:
             rationale=hypothesis.get("rationale", ""),
             candidate_fields=", ".join(hypothesis.get("candidate_fields", [])),
             candidate_operators=", ".join(hypothesis.get("candidate_operators", [])),
+            allowed_operators=", ".join(self._kb.all_names()[:200]),
             holding_period=hypothesis.get("expected_holding_period", "medium"),
-            all_fields=", ".join(all_fields[:80]),  # truncate for context window
+            all_fields=", ".join(all_fields[:300]),  # broader whitelist to reduce field hallucination
             few_shots=few_shots,
             k=k,
         )

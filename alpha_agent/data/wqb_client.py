@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -27,6 +29,41 @@ from tenacity import (
 from alpha_agent.config import settings
 
 API_BASE = "https://api.worldquantbrain.com"
+_SIMULATION_POST_MAX_ATTEMPTS = 4
+_SIMULATION_POLL_MAX_WAIT_SECONDS = 30 * 60
+_SIMULATION_POLL_FALLBACK_SLEEP_SECONDS = 3.0
+_REQUEST_MAX_ATTEMPTS = 4
+_REQUEST_RETRY_BASE_SECONDS = 1.5
+
+
+def _build_logger() -> logging.Logger:
+    logger = logging.getLogger("alpha_agent.wqb_client")
+    if logger.handlers:
+        return logger
+
+    logger.setLevel(logging.INFO)
+    log_path = Path(__file__).resolve().parents[2] / "data" / "wqb_client.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.INFO)
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    return logger
+
+
+logger = _build_logger()
 
 
 # ── Pydantic response models ──────────────────────────────────────────────────
@@ -87,20 +124,36 @@ class WQBClient:
         self._semaphore = asyncio.Semaphore(self._concurrency)
         self._client: httpx.AsyncClient | None = None
 
+    def _create_http_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=API_BASE,
+            timeout=httpx.Timeout(60.0),
+            # HTTP/2 may intermittently trigger RemoteProtocolError with some proxies/gateways.
+            http2=False,
+            # Default to ignore system proxy variables for stability.
+            trust_env=settings.wqb_trust_env,
+        )
+
     # ── context manager ───────────────────────────────────────────────────────
 
     async def __aenter__(self) -> "WQBClient":
-        self._client = httpx.AsyncClient(
-            base_url=API_BASE,
-            timeout=httpx.Timeout(60.0),
-            http2=True,
-        )
+        self._client = self._create_http_client()
         await self._authenticate()
         return self
 
     async def __aexit__(self, *_: Any) -> None:
         if self._client:
             await self._client.aclose()
+
+    async def _refresh_session(self) -> None:
+        """Recreate HTTP client and re-authenticate after transport-level failures."""
+        old_client = self._client
+        self._client = self._create_http_client()
+        try:
+            await self._authenticate()
+        finally:
+            if old_client is not None:
+                await old_client.aclose()
 
     # ── authentication ────────────────────────────────────────────────────────
 
@@ -121,11 +174,35 @@ class WQBClient:
     )
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         assert self._client is not None
-        resp = await self._client.request(method, path, **kwargs)
-        if resp.status_code == 401:
-            await self._authenticate()
-            resp = await self._client.request(method, path, **kwargs)
-        return resp
+        last_error: Exception | None = None
+        for attempt in range(1, _REQUEST_MAX_ATTEMPTS + 1):
+            try:
+                resp = await self._client.request(method, path, **kwargs)
+                if resp.status_code == 401:
+                    await self._authenticate()
+                    resp = await self._client.request(method, path, **kwargs)
+                return resp
+            except (httpx.TimeoutException, httpx.TransportError, httpx.RemoteProtocolError) as e:
+                last_error = e
+                if attempt == _REQUEST_MAX_ATTEMPTS:
+                    break
+                backoff = min(10.0, _REQUEST_RETRY_BASE_SECONDS * attempt)
+                logger.warning(
+                    f"[WQBClient] Request transient error "
+                    f"attempt={attempt}/{_REQUEST_MAX_ATTEMPTS} method={method} path={path} "
+                    f"error={type(e).__name__}: {e}; retry_in={backoff}s"
+                )
+                try:
+                    await self._refresh_session()
+                except Exception as refresh_error:
+                    logger.warning(
+                        f"[WQBClient] Session refresh failed "
+                        f"error={type(refresh_error).__name__}: {refresh_error}"
+                    )
+                await asyncio.sleep(backoff)
+
+        assert last_error is not None
+        raise last_error
 
     # ── data fields ───────────────────────────────────────────────────────────
 
@@ -223,16 +300,43 @@ class WQBClient:
     ) -> AlphaResult | None:
         assert self._client is not None
         try:
-            sim_resp = await self._request("POST", "/simulations", json=payload)
-            if sim_resp.status_code != 201:
+            sim_resp: httpx.Response | None = None
+            for attempt in range(1, _SIMULATION_POST_MAX_ATTEMPTS + 1):
+                sim_resp = await self._request("POST", "/simulations", json=payload)
+                if sim_resp.status_code == 201:
+                    break
+
+                retry_after = float(
+                    sim_resp.headers.get("Retry-After", _SIMULATION_POLL_FALLBACK_SLEEP_SECONDS)
+                )
+                should_retry = sim_resp.status_code in {429, 500, 502, 503, 504}
+                logger.warning(
+                    f"[WQBClient] POST /simulations failed "
+                    f"attempt={attempt}/{_SIMULATION_POST_MAX_ATTEMPTS} "
+                    f"status={sim_resp.status_code} expr_full={expression!r} "
+                    f"body={sim_resp.text[:240]!r}"
+                )
+                if not should_retry or attempt == _SIMULATION_POST_MAX_ATTEMPTS:
+                    return None
+                await asyncio.sleep(max(1.0, retry_after))
+
+            if sim_resp is None or sim_resp.status_code != 201:
                 return None
 
             progress_url = sim_resp.headers.get("Location", "")
             if not progress_url:
+                logger.warning(
+                    f"[WQBClient] Missing simulation progress URL "
+                    f"expr_full={expression!r}"
+                )
                 return None
 
             alpha_id = await self._poll_simulation(progress_url)
             if not alpha_id:
+                logger.warning(
+                    f"[WQBClient] Simulation polling timed out "
+                    f"expr_full={expression!r}"
+                )
                 return None
 
             detail_resp = await self._request("GET", f"/alphas/{alpha_id}")
@@ -241,28 +345,95 @@ class WQBClient:
                     break
                 await asyncio.sleep(1)
                 detail_resp = await self._request("GET", f"/alphas/{alpha_id}")
+
+            if detail_resp.status_code == 202:
+                logger.warning(
+                    f"[WQBClient] Alpha detail still pending after retries "
+                    f"alpha_id={alpha_id} expr_full={expression!r}"
+                )
+                return None
+
+            if detail_resp.status_code != 200:
+                logger.warning(
+                    f"[WQBClient] GET /alphas/{alpha_id} failed "
+                    f"status={detail_resp.status_code} expr_full={expression!r} "
+                    f"body={detail_resp.text[:240]!r}"
+                )
+                return None
+
             detail_resp.raise_for_status()
             alpha_data = detail_resp.json()
 
             if "is" not in alpha_data:
+                logger.warning(
+                    f"[WQBClient] Alpha detail missing 'is' payload "
+                    f"alpha_id={alpha_id} expr_full={expression!r} "
+                    f"keys={list(alpha_data.keys())[:12]}"
+                )
                 return None
 
             return self._parse_result(alpha_id, expression, dataset, payload, alpha_data)
 
-        except Exception:
+        except Exception as e:
+            logger.exception(
+                f"[WQBClient] Simulation exception expr_full={expression!r} "
+                f"error={type(e).__name__}: {e}"
+            )
             return None
 
     async def _poll_simulation(self, url: str) -> str | None:
         """Poll until simulation completes; returns alpha_id on success."""
-        assert self._client is not None
-        for _ in range(120):
-            resp = await self._client.get(url)
+        started = asyncio.get_event_loop().time()
+        transient_failures = 0
+        while True:
+            if (asyncio.get_event_loop().time() - started) >= _SIMULATION_POLL_MAX_WAIT_SECONDS:
+                return None
+
+            try:
+                resp = await self._request("GET", url)
+            except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPError) as e:
+                transient_failures += 1
+                backoff = min(
+                    10.0,
+                    _SIMULATION_POLL_FALLBACK_SLEEP_SECONDS * max(1, transient_failures),
+                )
+                logger.warning(
+                    f"[WQBClient] Poll transient error count={transient_failures} "
+                    f"error={type(e).__name__}: {e}"
+                )
+                await asyncio.sleep(backoff)
+                continue
+
             retry_after = float(resp.headers.get("Retry-After", 0))
+
+            # WQB/gateway may intermittently return upstream errors while job is still queued.
+            if resp.status_code in {429, 500, 502, 503, 504}:
+                transient_failures += 1
+                wait_s = max(retry_after, _SIMULATION_POLL_FALLBACK_SLEEP_SECONDS)
+                logger.warning(
+                    f"[WQBClient] Poll transient status count={transient_failures} "
+                    f"status={resp.status_code} wait={wait_s}s"
+                )
+                await asyncio.sleep(wait_s)
+                continue
+
+            # For other non-200 responses, stop polling this simulation.
+            if resp.status_code != 200:
+                logger.warning(
+                    f"[WQBClient] Poll non-retriable status={resp.status_code} "
+                    f"body={resp.text[:240]!r}"
+                )
+                return None
+
             if retry_after == 0:
-                body = resp.json()
+                try:
+                    body = resp.json()
+                except ValueError:
+                    logger.warning("[WQBClient] Poll response is not valid JSON.")
+                    await asyncio.sleep(_SIMULATION_POLL_FALLBACK_SLEEP_SECONDS)
+                    continue
                 return body.get("alpha")
-            await asyncio.sleep(retry_after)
-        return None
+            await asyncio.sleep(max(retry_after, _SIMULATION_POLL_FALLBACK_SLEEP_SECONDS))
 
     @staticmethod
     def _parse_result(

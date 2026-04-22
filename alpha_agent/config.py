@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     wqb_neutralization: str = Field(default="SUBINDUSTRY", alias="WQB_NEUTRALIZATION")
     wqb_truncation: float = Field(default=0.08, alias="WQB_TRUNCATION")
     wqb_concurrency: int = Field(default=3, alias="WQB_CONCURRENCY")
+    wqb_trust_env: bool = Field(default=False, alias="WQB_TRUST_ENV")
 
     # ── Qualification thresholds ──────────────────────────────
     qual_sharpe_min: float = Field(default=1.5, alias="QUAL_SHARPE_MIN")
